@@ -254,7 +254,7 @@ func (h pamHandler) getGroupMemberDN(group GroupEntry) (memberNames []string, me
 			h.log.V(6).Info("User without primary group", "name", name, "gid", localUser.Gid, "error", err.Error())
 			continue
 		}
-		dn := fmt.Sprintf("%s=%s,%s=%s,%s", h.cfg.Backend.NameFormat, localUser.Username, h.cfg.Backend.GroupFormat, primaryGroup.Name, h.cfg.Backend.BaseDN)
+		dn := fmt.Sprintf("%s=%s,%s=%s,%s", h.cfg.Backend.NameFormatAsArray[0], localUser.Username, h.cfg.Backend.GroupFormatAsArray[0], primaryGroup.Name, h.cfg.Backend.BaseDN)
 		memberNames = append(memberNames, dn)
 		memberUids = append(memberUids, localUser.Username)
 	}
@@ -284,7 +284,7 @@ func (h pamHandler) FindPosixGroups(hierarchy string) (entrylist []*ldap.Entry, 
 		attrs = append(attrs, &ldap.EntryAttribute{Name: "uniqueMember", Values: memberNames})
 		attrs = append(attrs, &ldap.EntryAttribute{Name: "memberUid", Values: memberUids})
 
-		dn := fmt.Sprintf("%s=%s,ou=groups,%s", h.cfg.Backend.GroupFormat, localGroup.Name, h.cfg.Backend.BaseDN)
+		dn := fmt.Sprintf("%s=%s,ou=groups,%s", h.cfg.Backend.GroupFormatAsArray[0], localGroup.Name, h.cfg.Backend.BaseDN)
 		entries = append(entries, &ldap.Entry{DN: dn, Attributes: attrs})
 	}
 	return entries, nil
@@ -299,7 +299,7 @@ func (h pamHandler) getUserGroupDN(localUser *user.User) (localGroupDN []string)
 				h.log.V(6).Info("Bad group", "gid", gid, "error", err.Error())
 				continue
 			}
-			dn := fmt.Sprintf("%s=%s,ou=groups,%s", h.cfg.Backend.GroupFormat, userGroup.Name, h.cfg.Backend.BaseDN)
+			dn := fmt.Sprintf("%s=%s,ou=groups,%s", h.cfg.Backend.GroupFormatAsArray[0], userGroup.Name, h.cfg.Backend.BaseDN)
 			localGroupDN = append(localGroupDN, dn)
 		}
 	}
@@ -354,9 +354,9 @@ func (h pamHandler) FindPosixAccounts(hierarchy string) (entrylist []*ldap.Entry
 
 		var dn string
 		if hierarchy == "" {
-			dn = fmt.Sprintf("%s=%s,%s=%s,%s", h.cfg.Backend.NameFormat, localUser.Username, h.cfg.Backend.GroupFormat, localGroup.Name, h.backend.BaseDN)
+			dn = fmt.Sprintf("%s=%s,%s=%s,%s", h.cfg.Backend.NameFormatAsArray[0], localUser.Username, h.cfg.Backend.GroupFormatAsArray[0], localGroup.Name, h.backend.BaseDN)
 		} else {
-			dn = fmt.Sprintf("%s=%s,%s=%s,%s,%s", h.cfg.Backend.NameFormat, localUser.Username, h.cfg.Backend.GroupFormat, localGroup.Name, hierarchy, h.backend.BaseDN)
+			dn = fmt.Sprintf("%s=%s,%s=%s,%s,%s", h.cfg.Backend.NameFormatAsArray[0], localUser.Username, h.cfg.Backend.GroupFormatAsArray[0], localGroup.Name, hierarchy, h.backend.BaseDN)
 		}
 		entries = append(entries, &ldap.Entry{DN: dn, Attributes: attrs})
 	}
