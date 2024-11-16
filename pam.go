@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -13,9 +14,9 @@ import (
 	"github.com/GeertJohan/yubigo"
 	"github.com/glauth/glauth/v2/pkg/config"
 	"github.com/glauth/glauth/v2/pkg/handler"
-	"github.com/go-logr/logr"
+	"github.com/glauth/ldap"
 	"github.com/msteinert/pam"
-	"github.com/nmcclain/ldap"
+	"github.com/rs/zerolog"
 )
 
 func copyBytes(x []byte) []byte {
@@ -51,7 +52,7 @@ func (h pamHandler) localUserIds() ([]string, error) {
 		// https://en.wikipedia.org/wiki/Passwd#Password_file
 		// expect username:*:uid:gid
 		if len(fs) < 3 {
-			h.log.V(6).Info(fmt.Sprintf("Unexpected number of fields in /etc/passwd at '%s'", line))
+			h.log.Error().Msg(fmt.Sprintf("Unexpected number of fields in /etc/passwd at '%s'", line))
 			continue
 		}
 		entries = append(entries, fs[2])
@@ -84,7 +85,7 @@ func (h pamHandler) collectAllLocalGroups() ([]GroupEntry, error) {
 		// https://en.wikipedia.org/wiki/Group_identifier
 		// expect group:*:gid
 		if len(fs) < 3 {
-			h.log.V(6).Info(fmt.Sprintf("Unexpected number of fields in /etc/group at '%s'", line))
+			h.log.Error().Msg(fmt.Sprintf("Unexpected number of fields in /etc/group at '%s'", line))
 			continue
 		}
 		// prefer FieldsFunc over Split so that we drop empty entries
@@ -125,7 +126,7 @@ func authenticateUserPAM(user *config.User, bindSimplePw string) error {
 
 type pamHandler struct {
 	backend      config.Backend
-	log          logr.Logger
+	log          *zerolog.Logger
 	ldohelper    handler.LDAPOpsHelper
 	cfg          *config.Config
 	capSearchGid string
@@ -134,7 +135,7 @@ type pamHandler struct {
 func (h pamHandler) GetBackend() config.Backend {
 	return h.backend
 }
-func (h pamHandler) GetLog() logr.Logger {
+func (h pamHandler) GetLog() *zerolog.Logger {
 	return h.log
 }
 func (h pamHandler) GetCfg() *config.Config {
@@ -145,11 +146,11 @@ func (h pamHandler) GetYubikeyAuth() *yubigo.YubiAuth {
 }
 
 func (h pamHandler) Bind(bindDN, bindSimplePw string, conn net.Conn) (ldap.LDAPResultCode, error) {
-	return h.ldohelper.Bind(h, bindDN, bindSimplePw, conn)
+	return h.ldohelper.Bind(context.Background(), h, bindDN, bindSimplePw, conn)
 }
 
 func (h pamHandler) Search(bindDN string, searchReq ldap.SearchRequest, conn net.Conn) (ldap.ServerSearchResult, error) {
-	return h.ldohelper.Search(h, bindDN, searchReq, conn)
+	return h.ldohelper.Search(context.Background(), h, bindDN, searchReq, conn)
 }
 
 // Add is not yet supported for the pam backend
@@ -168,17 +169,17 @@ func (h pamHandler) Delete(boundDN string, deleteDN string, conn net.Conn) (resu
 }
 
 // FindUser with the given username. Called by the ldap backend to authenticate the bind. Optional
-func (h pamHandler) FindUser(userName string, searchByUPN bool) (found bool, ldapUser config.User, err error) {
-	h.log.V(6).Info("FindUser", "userName", userName, "searchByUPN", searchByUPN)
+func (h pamHandler) FindUser(ctx context.Context, userName string, searchByUPN bool) (found bool, ldapUser config.User, err error) {
+	h.log.Info().Str("userName", userName).Bool("searchByUPN", searchByUPN).Msg("FindUser")
 	if searchByUPN {
-		h.log.V(2).Info("Searching by UPN is not supported")
+		h.log.Info().Msg("Searching by UPN is not supported")
 		return false, config.User{}, nil
 	}
 
 	localUser, err := user.Lookup(userName)
 	if err != nil {
 		// user is unknown
-		h.log.V(2).Info("FindUser failed - no such user", "username", userName, "error", err.Error())
+		h.log.Error().Str("username", userName).Err(err).Msg("FindUser failed - no such user")
 		return false, config.User{}, err
 	}
 
@@ -211,21 +212,21 @@ func (h pamHandler) FindUser(userName string, searchByUPN bool) (found bool, lda
 		}
 	} else {
 		// user has no groups
-		h.log.V(2).Info("FindUser - user without groups", "username", userName, "error", err.Error())
+		h.log.Error().Str("username", userName).Err(err).Msg("FindUser - user without groups")
 	}
 
 	return true, ldapUser, nil
 }
 
-func (h pamHandler) FindGroup(groupName string) (found bool, group config.Group, err error) {
+func (h pamHandler) FindGroup(ctx context.Context, groupName string) (found bool, group config.Group, err error) {
 	allLocalGroups, err := h.collectAllLocalGroups()
 	if err != nil {
-		h.log.V(2).Info("FindGroup - failed to enumerate groups", "error", err.Error())
+		h.log.Error().Err(err).Msg("FindGroup - failed to enumerate groups")
 	}
 	for _, g := range allLocalGroups {
 		localGroup, err := user.LookupGroupId(g.Gid)
 		if err != nil {
-			h.log.V(6).Info("FindGroup - bad group", "gid", g.Gid, "error", err.Error())
+			h.log.Error().Str("gid", g.Gid).Err(err).Msg("FindGroup - bad group")
 			continue
 		}
 
@@ -246,22 +247,22 @@ func (h pamHandler) getGroupMemberDN(group GroupEntry) (memberNames []string, me
 	for _, name := range group.MemberNames {
 		localUser, err := user.Lookup(name)
 		if err != nil {
-			h.log.V(6).Info("Bad user", "name", name, "group", group.Gid, "error", err.Error())
+			h.log.Error().Str("name", name).Str("group", group.Gid).Err(err).Msg("Bad user")
 			continue
 		}
 		primaryGroup, err := user.LookupGroupId(localUser.Gid)
 		if err != nil {
-			h.log.V(6).Info("User without primary group", "name", name, "gid", localUser.Gid, "error", err.Error())
+			h.log.Error().Str("name", name).Str("gid", localUser.Gid).Err(err).Msg("User without primary group")
 			continue
 		}
-		dn := fmt.Sprintf("%s=%s,%s=%s,%s", h.cfg.Backend.NameFormatAsArray[0], localUser.Username, h.cfg.Backend.GroupFormatAsArray[0], primaryGroup.Name, h.cfg.Backend.BaseDN)
+		dn := fmt.Sprintf("%s=%s,%s=%s,%s", h.backend.NameFormatAsArray[0], localUser.Username, h.backend.GroupFormatAsArray[0], primaryGroup.Name, h.backend.BaseDN)
 		memberNames = append(memberNames, dn)
 		memberUids = append(memberUids, localUser.Username)
 	}
 	return memberNames, memberUids
 }
 
-func (h pamHandler) FindPosixGroups(hierarchy string) (entrylist []*ldap.Entry, err error) {
+func (h pamHandler) FindPosixGroups(ctx context.Context, hierarchy string) (entrylist []*ldap.Entry, err error) {
 	groups, err := h.collectAllLocalGroups()
 	if err != nil {
 		return nil, err
@@ -270,7 +271,7 @@ func (h pamHandler) FindPosixGroups(hierarchy string) (entrylist []*ldap.Entry, 
 	for _, g := range groups {
 		localGroup, err := user.LookupGroupId(g.Gid)
 		if err != nil {
-			h.log.V(6).Info("Bad group", "gid", g.Gid, "error", err.Error())
+			h.log.Error().Str("gid", g.Gid).Err(err).Msg("Bad group")
 			continue
 		}
 		attrs := []*ldap.EntryAttribute{}
@@ -284,7 +285,7 @@ func (h pamHandler) FindPosixGroups(hierarchy string) (entrylist []*ldap.Entry, 
 		attrs = append(attrs, &ldap.EntryAttribute{Name: "uniqueMember", Values: memberNames})
 		attrs = append(attrs, &ldap.EntryAttribute{Name: "memberUid", Values: memberUids})
 
-		dn := fmt.Sprintf("%s=%s,ou=groups,%s", h.cfg.Backend.GroupFormatAsArray[0], localGroup.Name, h.cfg.Backend.BaseDN)
+		dn := fmt.Sprintf("%s=%s,ou=groups,%s", h.backend.GroupFormatAsArray[0], localGroup.Name, h.backend.BaseDN)
 		entries = append(entries, &ldap.Entry{DN: dn, Attributes: attrs})
 	}
 	return entries, nil
@@ -296,17 +297,17 @@ func (h pamHandler) getUserGroupDN(localUser *user.User) (localGroupDN []string)
 		for _, gid := range localGroups {
 			userGroup, err := user.LookupGroupId(gid)
 			if err != nil {
-				h.log.V(6).Info("Bad group", "gid", gid, "error", err.Error())
+				h.log.Error().Str("gid", gid).Err(err).Msg("Bad group")
 				continue
 			}
-			dn := fmt.Sprintf("%s=%s,ou=groups,%s", h.cfg.Backend.GroupFormatAsArray[0], userGroup.Name, h.cfg.Backend.BaseDN)
+			dn := fmt.Sprintf("%s=%s,ou=groups,%s", h.backend.GroupFormatAsArray[0], userGroup.Name, h.backend.BaseDN)
 			localGroupDN = append(localGroupDN, dn)
 		}
 	}
 	return localGroupDN
 }
 
-func (h pamHandler) FindPosixAccounts(hierarchy string) (entrylist []*ldap.Entry, err error) {
+func (h pamHandler) FindPosixAccounts(ctx context.Context, hierarchy string) (entrylist []*ldap.Entry, err error) {
 	users, err := h.localUserIds()
 	if err != nil {
 		return nil, err
@@ -315,12 +316,12 @@ func (h pamHandler) FindPosixAccounts(hierarchy string) (entrylist []*ldap.Entry
 	for _, u := range users {
 		localUser, err := user.LookupId(u)
 		if err != nil {
-			h.log.V(6).Info("Bad user", "uid", u, "error", err.Error())
+			h.log.Error().Str("uid", u).Err(err).Msg("Bad user")
 			continue
 		}
 		localGroup, err := user.LookupGroupId(localUser.Gid)
 		if err != nil {
-			h.log.V(6).Info("Bad primary group", "user", localUser.Username, "gid", localUser.Gid, "error", err.Error())
+			h.log.Error().Str("user", localUser.Username).Str("gid", localUser.Gid).Err(err).Msg("Bad primary group")
 			continue
 		}
 
@@ -354,9 +355,9 @@ func (h pamHandler) FindPosixAccounts(hierarchy string) (entrylist []*ldap.Entry
 
 		var dn string
 		if hierarchy == "" {
-			dn = fmt.Sprintf("%s=%s,%s=%s,%s", h.cfg.Backend.NameFormatAsArray[0], localUser.Username, h.cfg.Backend.GroupFormatAsArray[0], localGroup.Name, h.backend.BaseDN)
+			dn = fmt.Sprintf("%s=%s,%s=%s,%s", h.backend.NameFormatAsArray[0], localUser.Username, h.backend.GroupFormatAsArray[0], localGroup.Name, h.backend.BaseDN)
 		} else {
-			dn = fmt.Sprintf("%s=%s,%s=%s,%s,%s", h.cfg.Backend.NameFormatAsArray[0], localUser.Username, h.cfg.Backend.GroupFormatAsArray[0], localGroup.Name, hierarchy, h.backend.BaseDN)
+			dn = fmt.Sprintf("%s=%s,%s=%s,%s,%s", h.backend.NameFormatAsArray[0], localUser.Username, h.backend.GroupFormatAsArray[0], localGroup.Name, hierarchy, h.backend.BaseDN)
 		}
 		entries = append(entries, &ldap.Entry{DN: dn, Attributes: attrs})
 	}
@@ -374,9 +375,9 @@ func NewPamHandler(opts ...handler.Option) handler.Handler {
 	// determine which gid gets search capability
 	localGroup, err := user.LookupGroup(options.Backend.GroupWithSearchCapability)
 	if err != nil {
-		options.Logger.Error(err, "Failed to resolve handler.groupWithSearchCapability: No such group '"+options.Backend.GroupWithSearchCapability+"'")
+		options.Logger.Error().Err(err).Msg("Failed to resolve handler.groupWithSearchCapability: No such group '" + options.Backend.GroupWithSearchCapability + "'")
 	} else {
-		options.Logger.V(6).Info("Members of group '" + options.Backend.GroupWithSearchCapability + "' will get search capability")
+		options.Logger.Info().Msg("Members of group '" + options.Backend.GroupWithSearchCapability + "' will get search capability")
 	}
 
 	return pamHandler{

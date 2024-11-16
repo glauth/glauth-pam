@@ -5,7 +5,7 @@ PLUGIN_ARCH ?= amd64
 
 plugin_pam: bin/$(PLUGIN_OS)$(PLUGIN_ARCH)/pam_linux.so
 
-bin/$(PLUGIN_OS)$(PLUGIN_ARCH)/pam_linux.so: pkg/plugins/glauth-pam/pam_linux.go
+bin/$(PLUGIN_OS)$(PLUGIN_ARCH)/pam_linux.so: pkg/plugins/glauth-pam/pam.go
 	GOOS=$(PLUGIN_OS) GOARCH=$(PLUGIN_ARCH) go build ${TRIM_FLAGS} -ldflags "${BUILD_VARS}" -buildmode=plugin -o $@ $^
 
 plugin_pam_linux_amd64:
