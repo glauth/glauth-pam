@@ -1,6 +1,6 @@
 module github.com/glauth/glauth-sqlite
 
-go 1.21
+go 1.25
 
 require (
 	github.com/GeertJohan/yubigo v0.0.0-20190917122436-175bc097e60e
