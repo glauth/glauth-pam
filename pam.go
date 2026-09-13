@@ -15,7 +15,7 @@ import (
 	"github.com/glauth/glauth/v2/pkg/config"
 	"github.com/glauth/glauth/v2/pkg/handler"
 	"github.com/glauth/ldap"
-	"github.com/msteinert/pam/v2"
+	"github.com/msteinert/pam"
 	"github.com/rs/zerolog"
 )
 

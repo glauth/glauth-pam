@@ -7,5 +7,5 @@ require (
 	github.com/glauth/glauth/v2 v2.5.2
 	github.com/glauth/ldap v0.0.0-20240419171521-1f14f5c1b4ad
 	github.com/go-logr/logr v1.4.4
-	github.com/msteinert/pam/v2 v2.1.0
+	github.com/msteinert/pam v1.2.0
 )
