@@ -14,6 +14,9 @@ plugin_pam_linux_amd64:
 plugin_pam_linux_arm64:
 	PLUGIN_OS=linux PLUGIN_ARCH=arm64 make plugin_pam
 
+plugin_pam_linux_ppc64le:
+	PLUGIN_OS=linux PLUGIN_ARCH=ppc64le make plugin_pam
+
 plugin_pam_darwin_amd64:
 	PLUGIN_OS=darwin PLUGIN_ARCH=amd64 make plugin_pam
 
